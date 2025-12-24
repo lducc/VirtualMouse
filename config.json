@@ -1,0 +1,23 @@
+{
+    "debug": true,
+    "camera": {
+        "width": 1280,
+        "height": 720,
+        "fps": 60,
+        "device_index": 0
+    },
+    "mouse": {
+        "smoothing": 4.0,
+        "reduction": 150,
+        "scroll_speed": 100,
+        "pointer_landmark": 9
+    },
+    "gestures": [
+        {"name": "Move", "pattern": 7, "frames": 2},
+        {"name": "Left Click", "pattern": 5, "frames": 3},
+        {"name": "Right Click", "pattern": 3, "frames": 3},
+        {"name": "Drag", "pattern": 31, "frames": 5},
+        {"name": "Scroll", "pattern": 6, "frames": 5},
+        {"name": "Double Click", "pattern": 15, "frames": 3}
+    ]
+}

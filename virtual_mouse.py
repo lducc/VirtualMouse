@@ -2,15 +2,15 @@ import os, cv2, json, time
 import datetime
 import numpy as np
 import mediapipe as mp
-import pyautogui
+import ctypes 
+import psutil
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from threading import Thread
 
-@dataclass
-class Point:
-    x: int
-    y: int
+# Direct Win32 Setup
+user32 = ctypes.windll.user32
+user32.SetProcessDPIAware() # Fixes scaling issues on 1080p/4K screens ? Allegedly
 
 @dataclass
 class Gesture:
@@ -30,10 +30,9 @@ class Finger:
     RING   = 8   # 01000
     PINKY  = 16  # 10000
 
-
 class Mouse:
     def __init__(self, config: dict):
-            self.screen_w, self.screen_h = pyautogui.size() #1920, 1080
+            self.screen_w , self.screen_h= user32.GetSystemMetrics(0),  user32.GetSystemMetrics(1) #1920, 1080
             self.cam_config = config["camera"]
             self.mouse_config = config["mouse"]
             
@@ -41,16 +40,15 @@ class Mouse:
             self.prev_y = self.screen_h // 2
             self.curr_x, self.curr_y = 0, 0
             
-            pyautogui.FAILSAFE = False # prevents crash if mouse hits corner
-            pyautogui.PAUSE = 0 # high performance mode
+            self.frame_reduction = 120 
 
-    def move(self, point: Point):
+    def move(self, x: int, y: int):
             frame_reduction = self.mouse_config["reduction"]
             # Mapping from [reduction, cam_w - reduction] to [0, screen_w]
-            x_mapped = np.interp(point.x, 
+            x_mapped = np.interp(x, 
                                 (frame_reduction, self.cam_config["width"] - frame_reduction), 
                                 (0, self.screen_w))
-            y_mapped = np.interp(point.y, 
+            y_mapped = np.interp(y, 
                                 (frame_reduction, self.cam_config["height"] - frame_reduction), 
                                 (0, self.screen_h))
 
@@ -58,32 +56,42 @@ class Mouse:
             self.curr_x = (1 - alpha) * self.prev_x + alpha * x_mapped
             self.curr_y = (1 - alpha) * self.prev_y + alpha * y_mapped
 
-            pyautogui.moveTo(int(self.curr_x), int(self.curr_y))
-            # print(self.curr_x, self.curr_y)
+            # Direct Win32 SetCursorPos (Instant)
+            user32.SetCursorPos(int(self.curr_x), int(self.curr_y))
             
             self.prev_x, self.prev_y = self.curr_x, self.curr_y
 
     def left_click(self): 
-        pyautogui.leftClick()
+        user32.mouse_event(2, 0, 0, 0, 0) # Left Down
+        user32.mouse_event(4, 0, 0, 0, 0) # Left Up
     
     def right_click(self):
-        pyautogui.rightClick()
+        user32.mouse_event(8, 0, 0, 0, 0)  # Right Down
+        user32.mouse_event(16, 0, 0, 0, 0) # Right Up
 
     def drag_start(self): 
-        pyautogui.mouseDown()
+        user32.mouse_event(2, 0, 0, 0, 0)
 
     def drag_stop(self): 
-        pyautogui.mouseUp()
+        user32.mouse_event(4, 0, 0, 0, 0)
 
-    def scroll(self, point: Point):
+    def scroll(self, x: int, y: int):
         speed = self.mouse_config["scroll_speed"]
-        if point.y < (self.cam_config["height"] // 2) - 50:
-            pyautogui.scroll(speed)
-        elif point.y > (self.cam_config["height"] // 2) + 50:
-            pyautogui.scroll(-speed)
+        if y < (self.cam_config["height"] // 2):
+            direction = speed  
+        else:
+            direction = -speed
+        user32.mouse_event(0x0800, 0, 0, direction, 0) # Wheel Scroll
 
     def double_click(self):
-        pyautogui.doubleClick()
+        self.left_click()
+        self.left_click()
+    
+    def media_key(self, key_code):
+        # volume up = 0xAF, volume down = 0xAE, play/pause = 0xB3
+        user32.keybd_event(key_code, 0, 0, 0) # Key Down
+        user32.keybd_event(key_code, 0, 2, 0) # Key Up
+
 
 class WebcamStream:
     def __init__(self, config: dict):
@@ -123,21 +131,23 @@ class GestureEngine:
         self.mouse = mouse
         self.gestures: List[Gesture] = []
         self._load_config(config["gestures"])
-        # self._setup_gestures()
 
     def _load_config(self, g_list: list):
         # Maps the string name in JSON to the mouse methods
         action_map = {
-            "Move": {"on_hold": lambda pt: self.mouse.move(pt)},
-            "Left Click": {"on_start": lambda _: self.mouse.left_click()},
-            "Right Click": {"on_start": lambda _: self.mouse.right_click()},
+            "Move": {"on_hold": lambda x, y: self.mouse.move(x, y)},
+            "Left Click": {"on_start": lambda x, y: self.mouse.left_click()},
+            "Right Click": {"on_start": lambda x, y: self.mouse.right_click()},
             "Drag": {
-                "on_start": lambda _: self.mouse.drag_start(),
-                "on_hold": lambda pt: self.mouse.move(pt),
-                "on_exit": lambda _: self.mouse.drag_stop()
+                "on_start": lambda x, y: self.mouse.drag_start(),
+                "on_hold": lambda x, y: self.mouse.move(x, y),
+                "on_exit": lambda x, y: self.mouse.drag_stop()
             },
-            "Scroll": {"on_hold": lambda pt: self.mouse.scroll(pt)},
-            "Double Click": {"on_start": lambda _: self.mouse.double_click()}
+            "Scroll": {"on_hold": lambda x, y: self.mouse.scroll(x, y)},
+            "Double Click": {"on_start": lambda x, y: self.mouse.double_click()},
+            "Volumn Up": {"on_hold": lambda x, y: self.mouse.media_key(0xAF)},
+            "Volumn Down": {"on_hold": lambda x, y: self.mouse.media_key(0xAE)},
+            "Play/Pause": {"on_start": lambda x, y: self.mouse.media_key(0xB3)}
         }
 
         for g in g_list:
@@ -147,7 +157,7 @@ class GestureEngine:
                 required_frames=g["frames"], **act
             ))
 
-    def update(self, pattern: int, point: Point):
+    def update(self, pattern: int, x: int, y: int):
         for gesture in self.gestures:
             if pattern == gesture.pattern:
                 #Check if gesture is active before, if active then it is holding, if not then it is starting
@@ -155,18 +165,17 @@ class GestureEngine:
                 if gesture.counter >= gesture.required_frames:
                     if not gesture.is_active:
                         if gesture.on_start:
-                            gesture.on_start(point)
+                            gesture.on_start(x, y)
                         gesture.is_active = True
-                      
                     
                     if gesture.on_hold:
-                        gesture.on_hold(point)
+                        gesture.on_hold(x, y)
                 
             else:
                 #Check if gesture is active before, if yes then it is exitting the gesture
                 if gesture.is_active:
                     if gesture.on_exit:
-                        gesture.on_exit(point)
+                        gesture.on_exit(x, y)
                     gesture.is_active = False
                 gesture.counter = 0
 
@@ -181,7 +190,7 @@ class HandTracker():
         self.MP_HANDS = mp.solutions.hands
         self.hands = self.MP_HANDS.Hands(static_image_mode=False,
                                         max_num_hands=1,
-                                        model_complexity=0,
+                                        model_complexity=0, # Speed improvement
                                         min_detection_confidence=0.5,
                                         min_tracking_confidence=0.5)
         self.hand_label = None
@@ -201,11 +210,11 @@ class HandTracker():
                 
         return image
 
-    def get_point(self, landmark_id: int) -> Optional[Point]:
+    def get_point(self, landmark_id: int) -> Tuple[int, int]:
         if not self.result.multi_hand_landmarks:
-            return None
+            return 0, 0
         lm = self.result.multi_hand_landmarks[0].landmark[landmark_id]
-        return Point(int(lm.x * self.cam_config["width"]), int(lm.y * self.cam_config["height"]))
+        return int(lm.x * self.cam_config["width"]), int(lm.y * self.cam_config["height"])
     
     def find_fingers_up(self) -> int:
         mask = 0
@@ -234,8 +243,14 @@ class HandTracker():
 
         return mask
 
-        
 def main():
+    # Set high process priority for more performance
+    try:
+        p = psutil.Process(os.getpid())
+        p.nice(psutil.HIGH_PRIORITY_CLASS)
+    except: 
+        pass
+    
     with open("config.json", "r") as f:
         config = json.load(f)
 
@@ -245,8 +260,7 @@ def main():
     gesture_engine = GestureEngine(mouse, config)
     hand_tracker = HandTracker(config)
 
-    prev_time = datetime.datetime.now()
-    frames, fps = 0, 0
+    p_time = time.time()
 
     if not is_debug:
         print("Press Ctrl+C in this terminal to exit.")
@@ -256,26 +270,21 @@ def main():
 
         if frame is None:
             continue
-
-        frames += 1
-
-        delta_time = datetime.datetime.now() - prev_time
-        elapsed_time = delta_time.total_seconds()
-
-        if elapsed_time != 0:
-            fps = np.around(frames / elapsed_time, 1)
-
         frame = cv2.flip(frame, 1)
         frame = hand_tracker.find_hands(frame)
         
         if hand_tracker.result and hand_tracker.result.multi_hand_landmarks:
-            pattern = hand_tracker.find_fingers_up()            # if pattern > 0:
+            pattern = hand_tracker.find_fingers_up()            
+            # if pattern > 0:
             #     print(f"Current Bitmask: {pattern} | Hand: {hand_tracker.hand_label}")
-            index_tip = hand_tracker.get_point(config["mouse"]["pointer_landmark"])
-            gesture_engine.update(pattern, index_tip)
+            x, y = hand_tracker.get_point(config["mouse"]["pointer_landmark"])
+            gesture_engine.update(pattern, x, y)
        
         if is_debug:
-            cv2.putText(frame, f'FPS: {fps}', (20, 50), 1, cv2.FONT_HERSHEY_PLAIN, (0, 255, 0), 2)
+            curr_time = time.time()
+            fps = 1 / (curr_time - p_time + 0.001)
+            p_time = curr_time
+            cv2.putText(frame, f'FPS: {np.around(fps, 1)}', (20, 50), 1, cv2.FONT_HERSHEY_PLAIN, (0, 255, 0), 2)
             # print(fps)
             cv2.imshow("Webcam", frame)
 
@@ -286,6 +295,7 @@ def main():
             time.sleep(0.00005)
 
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()

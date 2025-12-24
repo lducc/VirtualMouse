@@ -1,10 +1,10 @@
 {
-    "debug": true,
+    "debug": false,
     "camera": {
-        "width": 1280,
-        "height": 720,
+        "width": 640,
+        "height": 480,
         "fps": 60,
-        "device_index": 0
+        "device_index": 0 
     },
     "mouse": {
         "smoothing": 4.0,
@@ -18,6 +18,9 @@
         {"name": "Right Click", "pattern": 3, "frames": 3},
         {"name": "Drag", "pattern": 31, "frames": 5},
         {"name": "Scroll", "pattern": 6, "frames": 5},
-        {"name": "Double Click", "pattern": 15, "frames": 3}
+        {"name": "Double Click", "pattern": 15, "frames": 3},
+        {"name": "Volumn Up", "pattern": 19, "frames": 3},
+        {"name": "Volumn Down", "pattern": 17, "frames": 3},
+        {"name": "Play/Pause", "pattern": 16, "frames": 10}
     ]
 }
